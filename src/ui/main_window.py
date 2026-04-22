@@ -71,10 +71,18 @@ class MainWindow(ctk.CTk):
         )
 
     def _build_tabs(self) -> None:
+        from src.ui.tabs.system_tools_tab import SystemToolsTab
+
         self.tabview = ctk.CTkTabview(self)
         self.tabview.pack(side="top", fill="both", expand=True, padx=12, pady=(8, 4))
         for name in TAB_NAMES:
             self.tabview.add(name)
+
+        SystemToolsTab(self.tabview.tab("System Tools"), main_window=self).pack(
+            fill="both", expand=True, padx=4, pady=4
+        )
+
+        for name in ("Debloat Windows 11", "Limpeza", "Info do Sistema"):
             ctk.CTkLabel(
                 self.tabview.tab(name),
                 text=f"[{name}] — em implementação",
