@@ -14,10 +14,13 @@ from src.features.performance import (
     PowerPlan,
     QuickToggle,
     StartupEntry,
+    _startup_approved_target,
+    get_startup_state,
     list_plans,
     list_startup_entries,
     read_toggle,
     set_active,
+    set_startup_state,
     unlock_ultimate_performance,
     write_toggle,
 )
@@ -360,7 +363,22 @@ class PerformanceTab(ctk.CTkFrame):
             top, text=entry.name, font=design.font_body("bold"), anchor="w",
         ).pack(side="left")
 
-        # Short location hint on right
+        togglable = _startup_approved_target(entry) is not None
+
+        if togglable:
+            var = ctk.BooleanVar(value=get_startup_state(entry))
+            switch = ctk.CTkSwitch(
+                top, text="", variable=var,
+                command=lambda e=entry, v=var: self._on_startup_toggle(e, v),
+            )
+            switch.pack(side="right", padx=design.SP_SM)
+        else:
+            ctk.CTkLabel(
+                top, text="sistema (não togglável)", fg_color=design.MUTED_TEXT,
+                text_color="white", corner_radius=12, padx=10,
+                font=design.font_caption(),
+            ).pack(side="right", padx=design.SP_SM)
+
         short_loc = entry.location.rsplit("\\", 1)[-1] or entry.location
         ctk.CTkLabel(
             top, text=short_loc, font=design.font_caption(),
@@ -371,10 +389,24 @@ class PerformanceTab(ctk.CTkFrame):
         ctk.CTkLabel(
             row, text=cmd_text, font=design.font_mono(10),
             text_color=design.MUTED_TEXT, anchor="w", justify="left",
-            wraplength=860,
+            wraplength=820,
         ).pack(fill="x", padx=(design.SP_LG + 24 + design.SP_SM, design.SP_LG),
                 pady=(0, design.SP_SM))
         return row
+
+    def _on_startup_toggle(self, entry: StartupEntry, var: ctk.BooleanVar) -> None:
+        desired = bool(var.get())
+        console = self.main_window.console
+
+        def worker() -> None:
+            ok, msg = set_startup_state(entry, desired)
+            console.append_line(f"[startup] {msg}")
+            if not ok:
+                # Revert switch
+                actual = get_startup_state(entry)
+                self.after(0, var.set, actual)
+
+        threading.Thread(target=worker, daemon=True, name="startup-toggle").start()
 
     def _open_settings_startup(self) -> None:
         try:

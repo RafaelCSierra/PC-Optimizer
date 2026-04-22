@@ -177,6 +177,47 @@ QUICK_TOGGLES: tuple[QuickToggle, ...] = (
         # 2 = best performance; 0 = let Windows choose (our 'off' default)
         on_value=2, off_value=0, default_when_missing=0,
     ),
+    QuickToggle(
+        id="tb_widgets",
+        label="Widgets na barra de tarefas",
+        description=(
+            "Botão de Widgets (clima, notícias, feed) à esquerda da barra. "
+            "Desligar libera espaço e reduz uso de rede passivo."
+        ),
+        reg_path=r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced",
+        reg_name="TaskbarDa",
+        on_value=1, off_value=0, default_when_missing=1,
+    ),
+    QuickToggle(
+        id="tb_copilot",
+        label="Botão Copilot na barra de tarefas",
+        description=(
+            "Ícone de atalho do Copilot. Desligar apenas oculta o botão — não "
+            "desabilita o serviço em si."
+        ),
+        reg_path=r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced",
+        reg_name="ShowCopilotButton",
+        on_value=1, off_value=0, default_when_missing=1,
+    ),
+    QuickToggle(
+        id="tb_chat",
+        label="Botão Chat (Teams consumer) na barra",
+        description="Atalho do Microsoft Teams consumer na barra de tarefas.",
+        reg_path=r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced",
+        reg_name="TaskbarMn",
+        on_value=1, off_value=0, default_when_missing=1,
+    ),
+    QuickToggle(
+        id="search_highlights",
+        label="Highlights / sugestões na busca",
+        description=(
+            "Banner colorido com 'dia de X' e sugestões no campo de busca do "
+            "menu Iniciar. Desligar limpa a UI da busca."
+        ),
+        reg_path=r"Software\Microsoft\Windows\CurrentVersion\Feeds\DSB",
+        reg_name="ShowDynamicContent",
+        on_value=1, off_value=0, default_when_missing=1,
+    ),
 )
 
 
@@ -273,3 +314,94 @@ def list_startup_entries(*, timeout: float = 20.0) -> list[StartupEntry]:
     # Sort by location then name for stable display.
     entries.sort(key=lambda e: (e.location.lower(), e.name.lower()))
     return entries
+
+
+# --- Startup enable/disable via StartupApproved ---
+# The StartupApproved subkey mirrors the Task Manager "Startup apps" toggle.
+# Each value is a binary blob: first DWORD is state (0x02/0x06 enabled, 0x03
+# disabled), followed by 8-byte FILETIME. Missing value → Windows treats as
+# enabled by default.
+
+_STATE_ENABLED = 0x02
+_STATE_DISABLED = 0x03
+
+
+def _filetime_now_bytes() -> bytes:
+    """Current UTC time as 8-byte little-endian FILETIME (100-ns since 1601)."""
+    import datetime
+    epoch = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    intervals = int((now - epoch).total_seconds() * 10_000_000)
+    return intervals.to_bytes(8, byteorder="little", signed=False)
+
+
+def _startup_approved_target(entry: StartupEntry) -> tuple[int, str, str] | None:
+    """Return (hive, subkey, value_name) for the StartupApproved entry matching
+    this StartupEntry, or None if the location isn't togglable.
+    """
+    loc = entry.location.strip().upper()
+    name = entry.name
+    approved_base = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved"
+
+    if loc == "STARTUP":
+        return (
+            winreg.HKEY_CURRENT_USER,
+            rf"{approved_base}\StartupFolder",
+            name if name.lower().endswith(".lnk") else f"{name}.lnk",
+        )
+    if loc == "COMMON STARTUP":
+        return (
+            winreg.HKEY_LOCAL_MACHINE,
+            rf"{approved_base}\StartupFolder",
+            name if name.lower().endswith(".lnk") else f"{name}.lnk",
+        )
+    if loc.startswith("HKLM"):
+        run_key = "Run32" if "WOW6432NODE" in loc else "Run"
+        return (
+            winreg.HKEY_LOCAL_MACHINE,
+            rf"{approved_base}\{run_key}",
+            name,
+        )
+    # Current user entries can come as HKCU\… or HKU\S-1-5-21-…\ (Win32_StartupCommand
+    # reports the per-user hive via its SID). Both map to HKCU StartupApproved.
+    if loc.startswith("HKCU") or loc.startswith("HKEY_CURRENT_USER"):
+        return (winreg.HKEY_CURRENT_USER, rf"{approved_base}\Run", name)
+    if loc.startswith("HKU\\S-1-5-21"):
+        return (winreg.HKEY_CURRENT_USER, rf"{approved_base}\Run", name)
+    # System profiles (HKU\.DEFAULT, HKU\S-1-5-18/19/20) — don't expose a toggle
+    return None
+
+
+def get_startup_state(entry: StartupEntry) -> bool:
+    """True if the entry is currently enabled (no StartupApproved record =
+    default enabled; 0x03 in the state byte = disabled)."""
+    target = _startup_approved_target(entry)
+    if target is None:
+        return True  # unknown location — assume enabled, toggling will be a no-op
+    hive, subkey, value_name = target
+    try:
+        with winreg.OpenKey(hive, subkey, 0, winreg.KEY_READ) as key:
+            data, _type = winreg.QueryValueEx(key, value_name)
+    except (FileNotFoundError, OSError):
+        return True
+    if not data:
+        return True
+    return data[0] != _STATE_DISABLED
+
+
+def set_startup_state(entry: StartupEntry, enabled: bool) -> tuple[bool, str]:
+    """Write to StartupApproved. Returns (ok, message)."""
+    target = _startup_approved_target(entry)
+    if target is None:
+        return False, f"localização não suportada: {entry.location}"
+    hive, subkey, value_name = target
+
+    state = _STATE_ENABLED if enabled else _STATE_DISABLED
+    payload = state.to_bytes(4, byteorder="little") + _filetime_now_bytes()
+    try:
+        with winreg.CreateKeyEx(hive, subkey, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, value_name, 0, winreg.REG_BINARY, payload)
+        return True, f"{entry.name}: {'habilitado' if enabled else 'desabilitado'}"
+    except OSError as e:
+        _log.exception("set_startup_state failed")
+        return False, f"erro registry: {e}"
