@@ -4,6 +4,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox
 
+from src.core import dry_run
 from src.core.admin import is_admin, relaunch_as_admin
 from src.core.logger import setup_logger
 
@@ -28,6 +29,8 @@ def _ask_elevation() -> bool:
 def main() -> int:
     logger = setup_logger()
     logger.info("--- PC Optimizer starting ---")
+
+    dry_run.init_from_config()
 
     admin = is_admin()
     logger.info("is_admin=%s", admin)

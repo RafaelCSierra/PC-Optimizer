@@ -4,10 +4,15 @@ from __future__ import annotations
 import threading
 import unittest
 
+from src.core import dry_run
 from src.core.executor import CommandExecutor
 
 
 class ExecutorTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # Executor tests assume dry-run is OFF — isolate from other test files
+        # that may have flipped the module-level flag.
+        dry_run._enabled = False
     def _run_and_wait(self, cmd: str, timeout: float = 10.0) -> tuple[list[str], int]:
         lines: list[str] = []
         exit_codes: list[int] = []

@@ -61,6 +61,16 @@ class CommandExecutor:
         pretty = cmd if isinstance(cmd, str) else " ".join(cmd)
 
         def worker() -> None:
+            from src.core import dry_run
+
+            if dry_run.is_enabled():
+                self._log.info("[DRY-RUN] would exec: %s", pretty)
+                on_line(f"[DRY-RUN] would execute: {pretty}")
+                on_line("[exit code 0 (dry-run)]")
+                if on_done:
+                    on_done(0)
+                return
+
             self._log.info("exec: %s", pretty)
             on_line(f"$ {pretty}")
             try:

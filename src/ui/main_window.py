@@ -5,7 +5,8 @@ import logging
 
 import customtkinter as ctk
 
-from src.core.executor import CommandExecutor
+from src.core import dry_run
+from src.core.executor import CommandExecutor, RunHandle
 from src.ui.components.output_console import OutputConsole
 
 TAB_NAMES: tuple[str, ...] = (
@@ -52,6 +53,23 @@ class MainWindow(ctk.CTk):
             side="right", padx=14
         )
 
+        self._dry_var = ctk.BooleanVar(value=dry_run.is_enabled())
+        self._dry_switch = ctk.CTkSwitch(
+            bar,
+            text="Dry-run (preview)",
+            variable=self._dry_var,
+            command=self._on_dry_toggle,
+        )
+        self._dry_switch.pack(side="right", padx=14)
+
+    def _on_dry_toggle(self) -> None:
+        value = bool(self._dry_var.get())
+        dry_run.set_enabled(value)
+        self.console.append_line(
+            f"[dry-run {'ATIVADO' if value else 'desativado'}]"
+            + (" — comandos serão apenas previstos, sem executar." if value else "")
+        )
+
     def _build_tabs(self) -> None:
         self.tabview = ctk.CTkTabview(self)
         self.tabview.pack(side="top", fill="both", expand=True, padx=12, pady=(8, 4))
@@ -66,3 +84,7 @@ class MainWindow(ctk.CTk):
     def _build_console(self) -> None:
         self.console = OutputConsole(self, height=200)
         self.console.pack(side="bottom", fill="x", padx=12, pady=(4, 12))
+
+    def run_cmd(self, cmd: str, *, on_done=None) -> RunHandle:
+        """Convenience: execute cmd with output streamed to the shared console."""
+        return self.executor.run(cmd, on_line=self.console.append_line, on_done=on_done)
