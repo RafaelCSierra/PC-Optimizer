@@ -71,6 +71,7 @@ class MainWindow(ctk.CTk):
         )
 
     def _build_tabs(self) -> None:
+        from src.ui.tabs.cleanup_tab import CleanupTab
         from src.ui.tabs.debloat_tab import DebloatTab
         from src.ui.tabs.system_tools_tab import SystemToolsTab
 
@@ -85,8 +86,11 @@ class MainWindow(ctk.CTk):
         DebloatTab(self.tabview.tab("Debloat Windows 11"), main_window=self).pack(
             fill="both", expand=True, padx=4, pady=4
         )
+        CleanupTab(self.tabview.tab("Limpeza"), main_window=self).pack(
+            fill="both", expand=True, padx=4, pady=4
+        )
 
-        for name in ("Limpeza", "Info do Sistema"):
+        for name in ("Info do Sistema",):
             ctk.CTkLabel(
                 self.tabview.tab(name),
                 text=f"[{name}] — em implementação",
