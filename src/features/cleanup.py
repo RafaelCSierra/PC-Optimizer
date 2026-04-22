@@ -6,7 +6,8 @@ is happening in real time.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 
 _PS = ("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command")
 
@@ -25,6 +26,39 @@ class CleanupTask:
     cmd: tuple[str, ...]
     needs_confirm: bool = False
     long_running: bool = False
+    # Filesystem targets whose total size is an upper-bound estimate of what the
+    # task will free. Empty = no estimate offered (e.g. component store, recycle bin).
+    size_targets: tuple[str, ...] = field(default_factory=tuple)
+
+
+def estimate_size(task: CleanupTask) -> int:
+    """Walk task.size_targets and sum file sizes. Returns 0 on any issue.
+
+    Caller should run this on a background thread — big temp dirs can take a few seconds.
+    """
+    total = 0
+    for target in task.size_targets:
+        path = os.path.expandvars(target)
+        if not os.path.isdir(path):
+            continue
+        for dirpath, _dirs, files in os.walk(path):
+            for f in files:
+                try:
+                    total += os.path.getsize(os.path.join(dirpath, f))
+                except OSError:
+                    continue
+    return total
+
+
+def format_bytes(n: int) -> str:
+    if n <= 0:
+        return "—"
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} PB"
 
 
 _CLEAN_TEMP = _ps(
@@ -106,6 +140,7 @@ CLEANUP_TASKS: tuple[CleanupTask, ...] = (
             "Arquivos em uso por processos ativos são ignorados."
         ),
         cmd=_CLEAN_TEMP,
+        size_targets=("%TEMP%", r"C:\Windows\Temp"),
     ),
     CleanupTask(
         id="prefetch",
@@ -117,6 +152,7 @@ CLEANUP_TASKS: tuple[CleanupTask, ...] = (
         ),
         cmd=_CLEAN_PREFETCH,
         needs_confirm=True,
+        size_targets=(r"C:\Windows\Prefetch",),
     ),
     CleanupTask(
         id="wu_cache",
@@ -128,6 +164,7 @@ CLEANUP_TASKS: tuple[CleanupTask, ...] = (
         ),
         cmd=_CLEAN_WU_CACHE,
         needs_confirm=True,
+        size_targets=(r"C:\Windows\SoftwareDistribution\Download",),
     ),
     CleanupTask(
         id="component_store",
