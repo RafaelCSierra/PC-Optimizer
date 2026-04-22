@@ -1,4 +1,4 @@
-"""System Tools tab: renders SYSTEM_TASKS as cards. Risky tasks hit a confirm dialog."""
+"""System Tools tab: tasks grouped by family in collapsible sections."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 import customtkinter as ctk
 
 from src.features.system_tools import SYSTEM_TASKS, RiskLevel, SystemTask
+from src.ui import design
+from src.ui.components.collapsible import CollapsibleSection
 from src.ui.components.confirm_dialog import ConfirmDialog
 from src.ui.components.task_card import TaskCard
 
@@ -22,10 +24,30 @@ class SystemToolsTab(ctk.CTkScrollableFrame):
         self.main_window = main_window
         self._cards: dict[str, TaskCard] = {}
 
+        # Bucket tasks by family
+        buckets: dict[str, list[SystemTask]] = {}
         for task in SYSTEM_TASKS:
-            card = TaskCard(self, task=task, on_run=self._on_run)
-            card.pack(fill="x", padx=6, pady=4)
-            self._cards[task.id] = card
+            family = design.family_for_system_task(task.id)
+            buckets.setdefault(family, []).append(task)
+
+        for family in design.SYSTEM_FAMILIES_ORDER:
+            tasks_in_family = buckets.get(family, [])
+            if not tasks_in_family:
+                continue
+            section = CollapsibleSection(
+                self,
+                title=family,
+                icon=design.icon_for_system_task(tasks_in_family[0].id),
+                initially_open=True,
+                count=len(tasks_in_family),
+            )
+            section.pack(fill="x")
+            for task in tasks_in_family:
+                card = TaskCard(section.body, task=task, on_run=self._on_run)
+                card.pack(fill="x", padx=2, pady=3)
+                self._cards[task.id] = card
+
+    # ---------- actions ----------
 
     def _on_run(self, task: SystemTask) -> None:
         if task.risk in _RISKY:
@@ -41,19 +63,20 @@ class SystemToolsTab(ctk.CTkScrollableFrame):
                 confirm_label="Executar",
             )
             if not confirmed:
-                self._cards[task.id].reset()
-                self.main_window.console.append_line(
-                    f"[cancelado] {task.label}"
-                )
+                self.main_window.console.append_line(f"[cancelado] {task.label}")
                 return
+
+        card = self._cards.get(task.id)
+        if card is not None:
+            card.begin()
 
         self.main_window.console.append_line(f"\n>>> {task.label}")
         self.main_window.run_cmd(
             task.cmd,
-            on_done=lambda _code, tid=task.id: self._on_done(tid),
+            on_done=lambda code, tid=task.id: self.after(0, self._finish, tid, code),
         )
 
-    def _on_done(self, task_id: str) -> None:
+    def _finish(self, task_id: str, code: int) -> None:
         card = self._cards.get(task_id)
         if card is not None:
-            self.after(0, card.reset)
+            card.finish(code)
