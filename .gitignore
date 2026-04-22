@@ -39,3 +39,6 @@ Desktop.ini
 config.local.json
 .env
 .env.*
+
+# Local dev helpers
+_debug_*.bat
