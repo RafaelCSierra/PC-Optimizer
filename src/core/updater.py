@@ -129,29 +129,52 @@ def download_update(
 
 def install_update_and_relaunch(new_exe: Path, current_exe: Path) -> None:
     """Spawn a small batch that waits for the current exe to exit, swaps it
-    with the new one, and relaunches. Caller must exit the process right after."""
+    with the new one, and relaunches. Caller must exit the process right after.
+
+    The batch writes its progress to %TEMP%\\PCOptimizer_update.log so we can
+    inspect post-mortem if something goes wrong.
+    """
     bat_path = Path(tempfile.gettempdir()) / "PCOptimizer_update.bat"
+    log_path = Path(tempfile.gettempdir()) / "PCOptimizer_update.log"
     target_name = current_exe.name
-    # Using %%~f0 (self-delete) and plain timeout to keep the script small.
+
     script = (
         "@echo off\r\n"
         "chcp 65001 > nul\r\n"
-        ":wait\r\n"
+        f'set LOG={log_path}\r\n'
+        'echo [%DATE% %TIME%] bat start > "%LOG%"\r\n'
+        f'echo new_exe={new_exe} >> "%LOG%"\r\n'
+        f'echo current_exe={current_exe} >> "%LOG%"\r\n'
+        'set /a WAIT_COUNT=0\r\n'
+        ':wait\r\n'
         f'tasklist /FI "IMAGENAME eq {target_name}" 2>nul | find /I "{target_name}" >nul\r\n'
-        "if not errorlevel 1 (\r\n"
-        "    timeout /t 1 /nobreak > nul\r\n"
-        "    goto wait\r\n"
-        ")\r\n"
-        f'move /Y "{new_exe}" "{current_exe}" > nul\r\n'
+        'if errorlevel 1 goto ready\r\n'
+        'set /a WAIT_COUNT+=1\r\n'
+        'if %WAIT_COUNT% GEQ 60 (\r\n'
+        '    echo [%DATE% %TIME%] timeout esperando exe sair >> "%LOG%"\r\n'
+        '    exit /b 1\r\n'
+        ')\r\n'
+        'timeout /t 1 /nobreak > nul\r\n'
+        'goto wait\r\n'
+        ':ready\r\n'
+        'echo [%DATE% %TIME%] exe saiu, movendo arquivo >> "%LOG%"\r\n'
+        f'move /Y "{new_exe}" "{current_exe}" >> "%LOG%" 2>&1\r\n'
+        'if errorlevel 1 (\r\n'
+        '    echo [%DATE% %TIME%] move falhou >> "%LOG%"\r\n'
+        '    exit /b 1\r\n'
+        ')\r\n'
+        'echo [%DATE% %TIME%] lancando nova versao >> "%LOG%"\r\n'
         f'start "" "{current_exe}"\r\n'
-        'del "%~f0"\r\n'
+        'echo [%DATE% %TIME%] concluido >> "%LOG%"\r\n'
     )
     bat_path.write_text(script, encoding="utf-8")
 
+    # Launch detached via `start` — cmd.exe spawns the bat in its own window
+    # (minimized) and exits, so we don't hold a process handle.
     subprocess.Popen(
-        ["cmd", "/c", str(bat_path)],
-        creationflags=_DETACHED_PROCESS | _CREATE_NO_WINDOW,
-        close_fds=True,
+        f'start "" /min cmd /c "{bat_path}"',
+        shell=True,
+        creationflags=_CREATE_NO_WINDOW,
     )
 
 

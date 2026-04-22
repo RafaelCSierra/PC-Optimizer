@@ -124,9 +124,20 @@ class UpdateDialog(ctk.CTkToplevel):
         self.after(400, self._relaunch, new_path)
 
     def _relaunch(self, new_path: Path) -> None:
-        updater.install_update_and_relaunch(new_path, self._current_exe)
-        # Exit the app — the batch will take over and relaunch
-        self.master.after(200, self.master.destroy)
+        import logging
+        log = logging.getLogger("pc_optimizer.update_dialog")
+        try:
+            log.info("launching updater bat: new=%s current=%s",
+                     new_path, self._current_exe)
+            updater.install_update_and_relaunch(new_path, self._current_exe)
+        except Exception:
+            log.exception("install_update_and_relaunch failed")
+            self._progress_var.set(
+                "Falha ao lançar o updater. Baixe manualmente: ver %TEMP%\\PCOptimizer_update"
+            )
+            return
+        # Give the bat a head start to begin its tasklist-wait loop before we exit.
+        self.master.after(400, self.master.destroy)
 
     def _download_failed(self, msg: str) -> None:
         self._downloading = False
