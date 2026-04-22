@@ -17,6 +17,7 @@ TAB_NAMES: tuple[str, ...] = (
     "Desinstalador",
     "Limpeza",
     "Performance",
+    "Hosts",
     "Info do Sistema",
 )
 
@@ -77,6 +78,7 @@ class MainWindow(ctk.CTk):
     def _build_tabs(self) -> None:
         from src.ui.tabs.cleanup_tab import CleanupTab
         from src.ui.tabs.debloat_tab import DebloatTab
+        from src.ui.tabs.hosts_tab import HostsTab
         from src.ui.tabs.info_tab import InfoTab
         from src.ui.tabs.performance_tab import PerformanceTab
         from src.ui.tabs.system_tools_tab import SystemToolsTab
@@ -100,6 +102,9 @@ class MainWindow(ctk.CTk):
             fill="both", expand=True, padx=4, pady=4
         )
         PerformanceTab(self.tabview.tab("Performance"), main_window=self).pack(
+            fill="both", expand=True, padx=4, pady=4
+        )
+        HostsTab(self.tabview.tab("Hosts"), main_window=self).pack(
             fill="both", expand=True, padx=4, pady=4
         )
         InfoTab(self.tabview.tab("Info do Sistema"), main_window=self).pack(

@@ -8,6 +8,7 @@ import customtkinter as ctk
 
 import os
 import subprocess
+from typing import cast
 
 from src.features.performance import (
     QUICK_TOGGLES,
@@ -24,6 +25,14 @@ from src.features.performance import (
     unlock_ultimate_performance,
     write_toggle,
 )
+from src.features.services import (
+    OPTIONAL_SERVICES,
+    STARTUP_LABELS,
+    OptionalService,
+    get_state as get_service_state,
+    set_startup_type as set_service_startup_type,
+)
+from src.ui.components.confirm_dialog import ConfirmDialog
 from src.ui import design
 from src.ui.components.collapsible import CollapsibleSection
 
@@ -43,6 +52,139 @@ def _plan_color(name: str) -> str:
     if "equilibrado" in n or "balanced" in n:
         return design.INFO
     return design.PRIMARY
+
+
+class _ServiceRow(ctk.CTkFrame):
+    """Single row for a service: name, description, impact, current state, dropdown + Apply."""
+
+    def __init__(self, master, *, svc: OptionalService, tab: "PerformanceTab") -> None:
+        super().__init__(
+            master, corner_radius=6, border_width=1,
+            border_color=design.CARD_BORDER, fg_color=design.CARD_BG,
+        )
+        self.svc = svc
+        self.tab = tab
+        self._current_startup: str | None = None
+        self._current_status: str | None = None
+
+        top = ctk.CTkFrame(self, fg_color="transparent")
+        top.pack(fill="x", padx=design.SP_LG, pady=(design.SP_SM, 0))
+
+        ctk.CTkLabel(
+            top, text="⚙", font=design.font_icon(16), width=24,
+        ).pack(side="left", padx=(0, design.SP_SM))
+
+        title = ctk.CTkFrame(top, fg_color="transparent")
+        title.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(
+            title, text=svc.display_name, font=design.font_body("bold"), anchor="w",
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            title, text=svc.service_name, font=design.font_mono(10),
+            text_color=design.SUBTLE_TEXT, anchor="w",
+        ).pack(anchor="w")
+
+        # Right: current state badge + dropdown + button
+        self._state_label = ctk.CTkLabel(
+            top, text="—", font=design.font_caption(),
+            fg_color=design.CODE_BG, text_color=design.MUTED_TEXT,
+            corner_radius=12, padx=10,
+        )
+        self._state_label.pack(side="right", padx=design.SP_XS)
+
+        ctk.CTkLabel(
+            self, text=svc.description, wraplength=820, justify="left",
+            anchor="w", font=design.font_body(),
+        ).pack(fill="x", padx=(design.SP_LG + 24 + design.SP_SM, design.SP_LG),
+               pady=(design.SP_XS, 0))
+
+        ctk.CTkLabel(
+            self, text=f"Impacto: {svc.impact}", wraplength=820, justify="left",
+            anchor="w", font=design.font_caption(), text_color=design.WARNING,
+        ).pack(fill="x", padx=(design.SP_LG + 24 + design.SP_SM, design.SP_LG),
+               pady=(design.SP_XS, 0))
+
+        actions = ctk.CTkFrame(self, fg_color="transparent")
+        actions.pack(fill="x", padx=design.SP_LG, pady=(design.SP_SM, design.SP_MD))
+
+        ctk.CTkLabel(
+            actions, text="Inicialização:", font=design.font_caption(),
+        ).pack(side="left", padx=(0, design.SP_SM))
+
+        self._startup_var = ctk.StringVar(value="—")
+        self._dropdown = ctk.CTkOptionMenu(
+            actions, variable=self._startup_var, width=170,
+            values=[STARTUP_LABELS[v] for v in ("Automatic", "Manual", "Disabled")],
+            command=lambda _: self._on_dropdown_change(),
+        )
+        self._dropdown.pack(side="left", padx=design.SP_XS)
+
+        ctk.CTkButton(
+            actions, text="Restaurar padrão", width=160,
+            fg_color="gray40", hover_color="gray30",
+            command=self._on_restore_default,
+        ).pack(side="right", padx=design.SP_XS)
+
+    def set_state(self, state: tuple[str, str] | None) -> None:
+        if state is None:
+            self._state_label.configure(text="n/d")
+            self._current_startup = None
+            self._current_status = None
+            return
+        startup, status = state
+        self._current_startup = startup
+        self._current_status = status
+        label = f"{status} · {STARTUP_LABELS.get(startup, startup)}"
+        color = design.SUCCESS if status == "Running" else design.MUTED_TEXT
+        self._state_label.configure(
+            text=label,
+            text_color="white" if status == "Running" else design.MUTED_TEXT,
+            fg_color=color if status == "Running" else design.CODE_BG,
+        )
+        # Sync dropdown to current value
+        self._startup_var.set(STARTUP_LABELS.get(startup, startup))
+
+    def _on_dropdown_change(self) -> None:
+        # Translate label back to PowerShell value
+        selected_label = self._startup_var.get()
+        selected = next(
+            (k for k, v in STARTUP_LABELS.items() if v == selected_label),
+            None,
+        )
+        if selected is None or selected == self._current_startup:
+            return
+
+        confirmed = ConfirmDialog.ask(
+            self.tab.main_window,
+            title=f"Alterar {self.svc.display_name}?",
+            description=(
+                f"{self.svc.description}\n\n"
+                f"Impacto de desabilitar: {self.svc.impact}"
+            ),
+            actions=[
+                f"Serviço: {self.svc.service_name}",
+                f"De: {STARTUP_LABELS.get(self._current_startup or '?', '?')}",
+                f"Para: {STARTUP_LABELS[selected]}",
+            ],
+            confirm_label="Aplicar",
+        )
+        if not confirmed:
+            # Revert dropdown
+            if self._current_startup:
+                self._startup_var.set(STARTUP_LABELS[self._current_startup])
+            return
+
+        self.tab.apply_service_change(self.svc, selected, self)
+
+    def _on_restore_default(self) -> None:
+        default = self.svc.default_startup
+        if default == self._current_startup:
+            self.tab.main_window.console.append_line(
+                f"[service] {self.svc.service_name} já está no padrão ({STARTUP_LABELS[default]})"
+            )
+            return
+        self._startup_var.set(STARTUP_LABELS[default])
+        self._on_dropdown_change()
 
 
 class PerformanceTab(ctk.CTkFrame):
@@ -84,6 +226,28 @@ class PerformanceTab(ctk.CTkFrame):
         toggles_section.pack(fill="x")
         for toggle in QUICK_TOGGLES:
             self._build_toggle_row(toggles_section.body, toggle)
+
+        # --- Optional services section ---
+        self._service_rows: dict[str, _ServiceRow] = {}
+        services_section = CollapsibleSection(
+            scroll, title="Serviços opcionais", icon="⚙",
+            initially_open=False, count=len(OPTIONAL_SERVICES),
+        )
+        services_section.pack(fill="x")
+        ctk.CTkLabel(
+            services_section.body,
+            text=(
+                "Curadoria de serviços que a maioria dos usuários pode mexer. Cada um "
+                "mostra o impacto de desabilitar — leia antes de trocar o tipo de inicialização."
+            ),
+            wraplength=880, justify="left",
+            font=design.font_caption(), text_color=design.MUTED_TEXT,
+        ).pack(anchor="w", padx=design.SP_LG, pady=(design.SP_SM, design.SP_XS))
+        for svc in OPTIONAL_SERVICES:
+            row = _ServiceRow(services_section.body, svc=svc, tab=self)
+            row.pack(fill="x", padx=design.SP_XS, pady=2)
+            self._service_rows[svc.service_name] = row
+        self.after(400, self._refresh_all_services)
 
         # --- Startup entries section ---
         self._startup_rows: list[ctk.CTkFrame] = []
@@ -422,3 +586,29 @@ class PerformanceTab(ctk.CTkFrame):
             self.main_window.console.append_line("[performance] falha ao abrir Task Manager")
             return
         self.main_window.console.append_line("[performance] Task Manager aberto")
+
+    # ---------- Services ----------
+
+    def _refresh_all_services(self) -> None:
+        """Update each row's current state in background."""
+        def worker() -> None:
+            for svc_name, row in list(self._service_rows.items()):
+                state = get_service_state(svc_name)
+                self.after(0, row.set_state, state)
+
+        threading.Thread(target=worker, daemon=True, name="services-refresh").start()
+
+    def apply_service_change(
+        self, svc: OptionalService, new_startup: str, row: "_ServiceRow",
+    ) -> None:
+        """Called by row after user confirms the startup-type change."""
+        console = self.main_window.console
+
+        def worker() -> None:
+            ok, msg = set_service_startup_type(svc.service_name, new_startup)
+            console.append_line(f"[service] {msg}")
+            # Refresh this row's state regardless of success
+            state = get_service_state(svc.service_name)
+            self.after(0, row.set_state, state)
+
+        threading.Thread(target=worker, daemon=True, name="service-apply").start()
