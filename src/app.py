@@ -44,6 +44,8 @@ def main() -> int:
     from src.ui.main_window import MainWindow
 
     window = MainWindow(admin=admin, logger=logger)
+    # Check for updates 3s after window shows — non-blocking
+    window.after(3000, window.check_for_updates_async)
     window.mainloop()
     logger.info("--- PC Optimizer exiting ---")
     return 0

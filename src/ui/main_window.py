@@ -3,15 +3,18 @@ from __future__ import annotations
 
 import logging
 
+import threading
+
 import customtkinter as ctk
 
-from src.core import dry_run
+from src.core import dry_run, updater
 from src.core.executor import CommandExecutor, RunHandle
 from src.ui.components.output_console import OutputConsole
 
 TAB_NAMES: tuple[str, ...] = (
     "System Tools",
     "Debloat Windows 11",
+    "Desinstalador",
     "Limpeza",
     "Performance",
     "Info do Sistema",
@@ -77,6 +80,7 @@ class MainWindow(ctk.CTk):
         from src.ui.tabs.info_tab import InfoTab
         from src.ui.tabs.performance_tab import PerformanceTab
         from src.ui.tabs.system_tools_tab import SystemToolsTab
+        from src.ui.tabs.uninstaller_tab import UninstallerTab
 
         self.tabview = ctk.CTkTabview(self)
         self.tabview.pack(side="top", fill="both", expand=True, padx=12, pady=(8, 4))
@@ -87,6 +91,9 @@ class MainWindow(ctk.CTk):
             fill="both", expand=True, padx=4, pady=4
         )
         DebloatTab(self.tabview.tab("Debloat Windows 11"), main_window=self).pack(
+            fill="both", expand=True, padx=4, pady=4
+        )
+        UninstallerTab(self.tabview.tab("Desinstalador"), main_window=self).pack(
             fill="both", expand=True, padx=4, pady=4
         )
         CleanupTab(self.tabview.tab("Limpeza"), main_window=self).pack(
@@ -103,6 +110,28 @@ class MainWindow(ctk.CTk):
         self.console = OutputConsole(self, height=200)
         self.console.pack(side="bottom", fill="x", padx=12, pady=(4, 12))
 
-    def run_cmd(self, cmd: str, *, on_done=None) -> RunHandle:
+    def run_cmd(self, cmd, *, on_done=None) -> RunHandle:
         """Convenience: execute cmd with output streamed to the shared console."""
         return self.executor.run(cmd, on_line=self.console.append_line, on_done=on_done)
+
+    def check_for_updates_async(self) -> None:
+        """Kick off a background update check. Safe no-op when not frozen."""
+        from src import __version__
+
+        exe = updater.current_exe_path()
+        if exe is None:
+            self.logger.info("update check skipped (running from source, not frozen exe)")
+            return
+
+        def worker() -> None:
+            info = updater.check_for_updates(__version__)
+            if info is not None:
+                self.after(0, self._show_update_dialog, info, exe)
+
+        threading.Thread(target=worker, daemon=True, name="update-check").start()
+
+    def _show_update_dialog(self, info, exe) -> None:
+        from src.ui.components.update_dialog import UpdateDialog
+
+        self.console.append_line(f"[updater] nova versão disponível: {info.tag}")
+        UpdateDialog(self, update=info, current_exe=exe)
