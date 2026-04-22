@@ -6,11 +6,16 @@ from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
+import os
+import subprocess
+
 from src.features.performance import (
     QUICK_TOGGLES,
     PowerPlan,
     QuickToggle,
+    StartupEntry,
     list_plans,
+    list_startup_entries,
     read_toggle,
     set_active,
     unlock_ultimate_performance,
@@ -76,6 +81,48 @@ class PerformanceTab(ctk.CTkFrame):
         toggles_section.pack(fill="x")
         for toggle in QUICK_TOGGLES:
             self._build_toggle_row(toggles_section.body, toggle)
+
+        # --- Startup entries section ---
+        self._startup_rows: list[ctk.CTkFrame] = []
+        self._startup_section = CollapsibleSection(
+            scroll, title="Programas de inicialização", icon="🚀",
+            initially_open=False,
+        )
+        self._startup_section.pack(fill="x")
+
+        intro = ctk.CTkLabel(
+            self._startup_section.body,
+            text=(
+                "Programas que rodam no login. Esta listagem é informativa — "
+                "para habilitar/desabilitar, abra as Configurações ou o Task Manager."
+            ),
+            wraplength=880, justify="left",
+            font=design.font_caption(), text_color=design.MUTED_TEXT,
+        )
+        intro.pack(anchor="w", padx=design.SP_LG, pady=(design.SP_SM, design.SP_XS))
+
+        startup_header = ctk.CTkFrame(self._startup_section.body, fg_color="transparent")
+        startup_header.pack(fill="x", padx=design.SP_MD, pady=(0, design.SP_XS))
+        self._startup_refresh_btn = ctk.CTkButton(
+            startup_header, text="🔄  Atualizar", width=130,
+            command=self._refresh_startup,
+        )
+        self._startup_refresh_btn.pack(side="left", padx=design.SP_XS)
+        ctk.CTkButton(
+            startup_header, text="⚙  Abrir Configurações", width=180,
+            command=self._open_settings_startup,
+        ).pack(side="left", padx=design.SP_XS)
+        ctk.CTkButton(
+            startup_header, text="🧰  Task Manager", width=150,
+            command=self._open_task_manager,
+        ).pack(side="left", padx=design.SP_XS)
+
+        self._startup_body = ctk.CTkFrame(
+            self._startup_section.body, fg_color="transparent"
+        )
+        self._startup_body.pack(fill="x", padx=design.SP_MD)
+
+        self.after(600, self._refresh_startup)
 
         footer = ctk.CTkFrame(self._power_section.body, fg_color="transparent")
         footer.pack(fill="x", pady=(design.SP_SM, 0))
@@ -260,8 +307,86 @@ class PerformanceTab(ctk.CTkFrame):
             ok, msg = write_toggle(toggle, desired)
             console.append_line(f"[performance] {msg}")
             if not ok:
-                # Revert UI to actual registry value
                 actual = read_toggle(toggle)
                 self.after(0, var.set, actual)
 
         threading.Thread(target=worker, daemon=True, name="quick-toggle").start()
+
+    # ---------- Startup listing ----------
+
+    def _refresh_startup(self) -> None:
+        self._startup_refresh_btn.configure(state="disabled")
+
+        def worker() -> None:
+            entries = list_startup_entries()
+            self.after(0, self._render_startup, entries)
+
+        threading.Thread(target=worker, daemon=True, name="startup-list").start()
+
+    def _render_startup(self, entries: list[StartupEntry]) -> None:
+        for row in self._startup_rows:
+            row.destroy()
+        self._startup_rows.clear()
+
+        if not entries:
+            lbl = ctk.CTkLabel(
+                self._startup_body,
+                text="Nenhuma entrada de startup detectada (ou falha ao consultar).",
+                text_color=design.MUTED_TEXT,
+            )
+            lbl.pack(padx=design.SP_LG, pady=design.SP_MD)
+            self._startup_rows.append(lbl)
+        else:
+            self._startup_section.set_count(len(entries))
+            for entry in entries:
+                self._startup_rows.append(self._build_startup_row(entry))
+
+        self._startup_refresh_btn.configure(state="normal")
+
+    def _build_startup_row(self, entry: StartupEntry) -> ctk.CTkFrame:
+        row = ctk.CTkFrame(
+            self._startup_body, corner_radius=6, border_width=1,
+            border_color=design.CARD_BORDER, fg_color=design.CARD_BG,
+        )
+        row.pack(fill="x", padx=design.SP_XS, pady=2)
+
+        top = ctk.CTkFrame(row, fg_color="transparent")
+        top.pack(fill="x", padx=design.SP_LG, pady=(design.SP_SM, 0))
+
+        ctk.CTkLabel(
+            top, text="🚀", font=design.font_icon(16), width=24,
+        ).pack(side="left", padx=(0, design.SP_SM))
+        ctk.CTkLabel(
+            top, text=entry.name, font=design.font_body("bold"), anchor="w",
+        ).pack(side="left")
+
+        # Short location hint on right
+        short_loc = entry.location.rsplit("\\", 1)[-1] or entry.location
+        ctk.CTkLabel(
+            top, text=short_loc, font=design.font_caption(),
+            text_color=design.SUBTLE_TEXT,
+        ).pack(side="right", padx=design.SP_SM)
+
+        cmd_text = entry.command if len(entry.command) <= 140 else entry.command[:137] + "…"
+        ctk.CTkLabel(
+            row, text=cmd_text, font=design.font_mono(10),
+            text_color=design.MUTED_TEXT, anchor="w", justify="left",
+            wraplength=860,
+        ).pack(fill="x", padx=(design.SP_LG + 24 + design.SP_SM, design.SP_LG),
+                pady=(0, design.SP_SM))
+        return row
+
+    def _open_settings_startup(self) -> None:
+        try:
+            os.startfile("ms-settings:startupapps")
+        except OSError:
+            subprocess.Popen(["cmd", "/c", "start", "ms-settings:startupapps"], shell=False)
+        self.main_window.console.append_line("[performance] Configurações > Startup apps aberta")
+
+    def _open_task_manager(self) -> None:
+        try:
+            subprocess.Popen(["taskmgr"])
+        except OSError:
+            self.main_window.console.append_line("[performance] falha ao abrir Task Manager")
+            return
+        self.main_window.console.append_line("[performance] Task Manager aberto")

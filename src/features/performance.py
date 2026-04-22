@@ -1,6 +1,7 @@
 """Performance feature module: power plans, quick toggles, startup entries."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 import subprocess
@@ -207,3 +208,68 @@ def write_toggle(toggle: QuickToggle, enable: bool) -> tuple[bool, str]:
     except OSError as e:
         _log.exception("write_toggle failed for %s", toggle.id)
         return False, f"erro ao gravar registry: {e}"
+
+
+# =============================================================================
+# Startup programs (read-only listing)
+# =============================================================================
+
+@dataclass(frozen=True)
+class StartupEntry:
+    name: str
+    command: str
+    location: str  # e.g. "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
+    user: str
+
+
+def list_startup_entries(*, timeout: float = 20.0) -> list[StartupEntry]:
+    """Return the merged list of Run-key entries + Startup-folder shortcuts.
+
+    Empty on any failure (logs the error).
+    """
+    script = (
+        "Get-CimInstance Win32_StartupCommand | "
+        "Select-Object Name, Command, Location, User | "
+        "ConvertTo-Json -Compress"
+    )
+    cmd = [
+        "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-Command", script,
+    ]
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired:
+        _log.error("list_startup_entries: timeout")
+        return []
+    except FileNotFoundError:
+        _log.error("powershell not found")
+        return []
+
+    if r.returncode != 0:
+        _log.error("Win32_StartupCommand failed: %s", (r.stderr or "").strip())
+        return []
+    out = (r.stdout or "").strip()
+    if not out:
+        return []
+    try:
+        raw = json.loads(out)
+    except json.JSONDecodeError:
+        _log.exception("failed to parse startup JSON")
+        return []
+
+    if isinstance(raw, dict):
+        raw = [raw]
+    entries: list[StartupEntry] = []
+    for item in raw:
+        entries.append(StartupEntry(
+            name=str(item.get("Name") or "—"),
+            command=str(item.get("Command") or ""),
+            location=str(item.get("Location") or "—"),
+            user=str(item.get("User") or "—"),
+        ))
+    # Sort by location then name for stable display.
+    entries.sort(key=lambda e: (e.location.lower(), e.name.lower()))
+    return entries
