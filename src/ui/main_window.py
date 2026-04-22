@@ -73,6 +73,7 @@ class MainWindow(ctk.CTk):
     def _build_tabs(self) -> None:
         from src.ui.tabs.cleanup_tab import CleanupTab
         from src.ui.tabs.debloat_tab import DebloatTab
+        from src.ui.tabs.info_tab import InfoTab
         from src.ui.tabs.system_tools_tab import SystemToolsTab
 
         self.tabview = ctk.CTkTabview(self)
@@ -89,13 +90,9 @@ class MainWindow(ctk.CTk):
         CleanupTab(self.tabview.tab("Limpeza"), main_window=self).pack(
             fill="both", expand=True, padx=4, pady=4
         )
-
-        for name in ("Info do Sistema",):
-            ctk.CTkLabel(
-                self.tabview.tab(name),
-                text=f"[{name}] — em implementação",
-                font=ctk.CTkFont(size=14),
-            ).pack(pady=40)
+        InfoTab(self.tabview.tab("Info do Sistema"), main_window=self).pack(
+            fill="both", expand=True, padx=4, pady=4
+        )
 
     def _build_console(self) -> None:
         self.console = OutputConsole(self, height=200)
